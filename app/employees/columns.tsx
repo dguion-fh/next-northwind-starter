@@ -3,6 +3,7 @@
 import { ColumnDef } from "@tanstack/react-table"
 import { ArrowUpDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import Link from "next/link"
 
 export type Employee = {
   employeeId: number | null
@@ -70,6 +71,21 @@ export const columns: ColumnDef<Employee>[] = [
           {notes}
         </div>
       ) : null
+    },
+  },
+  {
+    id: "actions",
+    header: "Actions",
+    cell: ({ row }) => {
+      const employee = row.original
+      return (
+        <Link
+          href={`/employees/${employee.employeeId}`}
+          className="text-blue-600 hover:underline"
+        >
+          View Details
+        </Link>
+      )
     },
   },
 ]

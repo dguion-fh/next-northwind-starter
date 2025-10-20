@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { eq } from "drizzle-orm";
-import { employees } from "@/drizzle/schema";
+import { employees, orders, customers } from "@/drizzle/schema";
 
 export async function getAllEmployees() {
   try {
@@ -29,32 +29,67 @@ export async function getEmployeeById(id: number) {
   }
 }
 
-// TODO: Exercise 2 - Add a new server action: getEmployeeById(id: string)
-//
-// Requirements:
-// 1. Accept an id parameter as a string
-// 2. Validate and convert the id to a number
-// 3. Fetch the employee by ID from the database
-// 4. Fetch all orders for this employee (include customer names)
-// 5. Return format: { success: boolean, data?: { employee, orders }, error?: string }
-// 6. Handle these error cases:
-//    - Invalid ID (not a number)
-//    - Employee not found
-//    - Database errors
-//
-// Hints:
-// - Use parseInt() to convert string to number
-// - Use isNaN() to check if the conversion worked
-// - Use db.query.employees.findFirst() to get the employee
-// - Use db.select().from(orders).leftJoin(customers, ...) for orders with customer names
-// - Use eq() from drizzle-orm for WHERE clauses
-//
-// Example structure:
-// export async function getEmployeeById(id: string) {
-//   try {
-//     // Your implementation here
-//   } catch (error) {
-//     console.error('Failed to fetch employee:', error)
-//     return { success: false, error: 'Failed to fetch employee details' }
-//   }
-// }
+export async function getEmployeeWithOrders(id: string) {
+  try {
+    // 1. Validate and convert the id to a number with proper bounds checking
+    // SECURITY FIX: Add radix and bounds to prevent integer overflow
+    const employeeId = parseInt(id, 10);
+    if (isNaN(employeeId) || employeeId < 1 || employeeId > 2147483647) {
+      return { success: false, error: "Invalid employee ID" };
+    }
+
+    // 2. PERFORMANCE FIX: Single query using Drizzle relational query
+    // This eliminates N+1 query problem by fetching employee and orders together
+    const result = await db.query.employees.findFirst({
+      where: eq(employees.employeeId, employeeId),
+      with: {
+        orders: {
+          with: {
+            customer: true,
+          },
+        },
+      },
+    });
+
+    // 3. Check if employee exists
+    if (!result) {
+      return { success: false, error: "Employee not found" };
+    }
+
+    // 4. Transform orders to match expected format and calculate stats
+    const transformedOrders = result.orders.map((order) => ({
+      orderId: order.orderId,
+      orderDate: order.orderDate,
+      customerId: order.customerId,
+      shipperId: order.shipperId,
+      customerName: order.customer?.customerName || null,
+    }));
+
+    // PERFORMANCE FIX: Calculate stats once on server instead of in render
+    const stats = {
+      totalOrders: transformedOrders.length,
+      uniqueCustomers: new Set(transformedOrders.map((o) => o.customerId))
+        .size,
+      shippedOrders: transformedOrders.filter((o) => o.shipperId !== null)
+        .length,
+    };
+
+    return {
+      success: true,
+      data: {
+        employee: result,
+        orders: transformedOrders,
+        stats,
+      },
+    };
+  } catch (error) {
+    // SECURITY FIX: Sanitize error logging to prevent information disclosure
+    // Only log safe metadata, not full error details
+    console.error("Failed to fetch employee details", {
+      employeeId: id,
+      errorType: error instanceof Error ? error.name : "Unknown",
+      // Do NOT log: error.message, error.stack
+    });
+    return { success: false, error: "Failed to fetch employee details" };
+  }
+}
