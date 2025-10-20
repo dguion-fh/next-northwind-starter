@@ -21,6 +21,19 @@ export default function Loading() {
         </div>
 
         {/* Table skeleton */}
+        {/*
+          IMPORTANT: Rows are hardcoded due to Tailwind CSS limitations.
+
+          Tailwind uses static analysis at build time - it scans source code for complete
+          class names like "w-40", "w-36", etc. Dynamic class generation using template
+          literals (e.g., `h-4 ${widths[0]}`) does NOT work because Tailwind cannot detect
+          the classes at build time, resulting in missing CSS in production.
+
+          Reference: https://tailwindcss.com/docs/content-configuration#dynamic-class-names
+
+          For loading skeletons with a fixed number of rows (10), hardcoded rows are the
+          correct and most performant approach.
+        */}
         <div className="rounded-md border">
           <Table>
             <TableHeader>
