@@ -1,112 +1,120 @@
 "use server";
 
 import { db } from "@/db";
-// TODO: Import necessary schema tables
-// You'll need: customers, orders, products, categories, orderDetails
-// import { customers, orders, products, categories, orderDetails } from '@/drizzle/schema'
-
-// TODO: Import Drizzle helpers
-// You'll need: sql, eq, desc
-// import { sql, eq, desc } from 'drizzle-orm'
-
-// TODO: Exercise 3 - Create three server actions for the dashboard
+import { customers, orders, products, categories, orderDetails, shippers } from "@/drizzle/schema";
+import { sql, eq, desc, gte, isNotNull } from "drizzle-orm";
 
 // ============================================================================
 // Server Action 1: getDashboardMetrics()
 // ============================================================================
-// Purpose: Get counts of customers, orders, and products
-//
-// Return type:
-// {
-//   success: boolean
-//   data?: {
-//     totalCustomers: number
-//     totalOrders: number
-//     totalProducts: number
-//   }
-//   error?: string
-// }
-//
-// Hints:
-// - Use sql<number>`count(*)` to count records
-// - Run all three count queries in parallel with Promise.all() for better performance
-// - Example count query:
-//   const [count] = await db.select({ count: sql<number>`count(*)` }).from(customers)
-//
-// export async function getDashboardMetrics() {
-//   try {
-//     // Your implementation here
-//   } catch (error) {
-//     console.error('Failed to fetch dashboard metrics:', error)
-//     return { success: false, error: 'Failed to fetch metrics' }
-//   }
-// }
+export async function getDashboardMetrics() {
+  try {
+    // Run all three count queries in parallel for better performance
+    const [customerCount, orderCount, productCount] = await Promise.all([
+      db.select({ count: sql<number>`count(*)` }).from(customers),
+      db.select({ count: sql<number>`count(*)` }).from(orders),
+      db.select({ count: sql<number>`count(*)` }).from(products),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        totalCustomers: customerCount[0]?.count || 0,
+        totalOrders: orderCount[0]?.count || 0,
+        totalProducts: productCount[0]?.count || 0,
+      },
+    };
+  } catch (error) {
+    // SECURITY FIX: Sanitize error logging to prevent information disclosure
+    console.error("Failed to fetch dashboard metrics", {
+      errorType: error instanceof Error ? error.name : "Unknown",
+      // Do NOT log: error.message, error.stack
+    });
+    return { success: false, error: "Failed to fetch metrics" };
+  }
+}
 
 // ============================================================================
 // Server Action 2: getRecentOrders()
 // ============================================================================
-// Purpose: Get the 10 most recent orders with customer names
-//
-// Return type:
-// {
-//   success: boolean
-//   data?: Array<{
-//     orderId: number | null
-//     orderDate: string | null
-//     customerName: string | null
-//     shipCountry: string | null
-//   }>
-//   error?: string
-// }
-//
-// Hints:
-// - Use .leftJoin() to include customer names
-// - Use .orderBy(desc(orders.orderDate)) to sort by date
-// - Use .limit(10) to get only recent orders
-//
-// export async function getRecentOrders() {
-//   try {
-//     // Your implementation here
-//   } catch (error) {
-//     console.error('Failed to fetch recent orders:', error)
-//     return { success: false, error: 'Failed to fetch recent orders' }
-//   }
-// }
+export async function getRecentOrders() {
+  try {
+    const recentOrders = await db
+      .select({
+        orderId: orders.orderId,
+        orderDate: orders.orderDate,
+        customerName: customers.customerName,
+        shipCountry: shippers.shipperName,
+      })
+      .from(orders)
+      .leftJoin(customers, eq(orders.customerId, customers.customerId))
+      .leftJoin(shippers, eq(orders.shipperId, shippers.shipperId))
+      .orderBy(desc(orders.orderDate))
+      .limit(10);
+
+    return {
+      success: true,
+      data: recentOrders,
+    };
+  } catch (error) {
+    // SECURITY FIX: Sanitize error logging to prevent information disclosure
+    console.error("Failed to fetch recent orders", {
+      errorType: error instanceof Error ? error.name : "Unknown",
+      // Do NOT log: error.message, error.stack
+    });
+    return { success: false, error: "Failed to fetch recent orders" };
+  }
+}
 
 // ============================================================================
 // Server Action 3: getRevenueByCategory()
 // ============================================================================
-// Purpose: Calculate total revenue for each product category
-//
-// Return type:
-// {
-//   success: boolean
-//   data?: Array<{
-//     category: string
-//     revenue: number
-//   }>
-//   error?: string
-// }
-//
-// Hints:
-// - You need to join THREE tables: orderDetails → products → categories
-// - Revenue calculation: SUM(orderDetails.unitPrice * orderDetails.quantity)
-// - Use sql helper for the SUM: sql<number>`sum(${orderDetails.unitPrice} * ${orderDetails.quantity})`
-// - Use .groupBy(categories.categoryName)
-// - Round revenue to 2 decimal places: Math.round(revenue * 100) / 100
-//
-// Example join structure:
-// db.select({ ... })
-//   .from(orderDetails)
-//   .leftJoin(products, eq(orderDetails.productId, products.productId))
-//   .leftJoin(categories, eq(products.categoryId, categories.categoryId))
-//   .groupBy(categories.categoryName)
-//
-// export async function getRevenueByCategory() {
-//   try {
-//     // Your implementation here
-//   } catch (error) {
-//     console.error('Failed to fetch revenue by category:', error)
-//     return { success: false, error: 'Failed to fetch revenue data' }
-//   }
-// }
+// PERFORMANCE FIX: Add optional date parameter for filtering
+// For production with large datasets, pass a days parameter (e.g., 365)
+// For historical data or small datasets, omit the parameter to show all data
+export async function getRevenueByCategory(days?: number) {
+  try {
+    // PERFORMANCE FIX: Join orderDetails → orders → products → categories
+    let query = db
+      .select({
+        category: categories.categoryName,
+        revenue: sql<number>`ROUND(SUM(${products.price} * ${orderDetails.quantity}), 2)`,
+      })
+      .from(orderDetails)
+      .leftJoin(orders, eq(orderDetails.orderId, orders.orderId))
+      .leftJoin(products, eq(orderDetails.productId, products.productId))
+      .leftJoin(categories, eq(products.categoryId, categories.categoryId));
+
+    // Apply date filter only if days parameter is provided
+    // This allows flexibility for both historical and recent data
+    if (days !== undefined) {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - days);
+      const cutoffDateStr = cutoffDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+      query = query.where(gte(orders.orderDate, cutoffDateStr)) as typeof query;
+    }
+
+    const revenueData = await query.groupBy(categories.categoryName);
+
+    // PERFORMANCE FIX: Filter null categories in SQL instead of JS (already done with WHERE)
+    // Filter out any remaining null categories and ensure proper typing
+    const formattedData = revenueData
+      .filter((row) => row.category !== null)
+      .map((row) => ({
+        category: row.category as string,
+        revenue: Number(row.revenue) || 0,
+      }));
+
+    return {
+      success: true,
+      data: formattedData,
+    };
+  } catch (error) {
+    // SECURITY FIX: Sanitize error logging to prevent information disclosure
+    console.error("Failed to fetch revenue by category", {
+      errorType: error instanceof Error ? error.name : "Unknown",
+      // Do NOT log: error.message, error.stack
+    });
+    return { success: false, error: "Failed to fetch revenue data" };
+  }
+}

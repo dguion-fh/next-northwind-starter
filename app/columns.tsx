@@ -23,11 +23,18 @@ export const columns: ColumnDef<RecentOrder>[] = [
     header: "Order Date",
     cell: ({ row }) => {
       const date = row.getValue("orderDate") as string
-      return date ? new Date(date).toLocaleDateString() : "-"
+      if (!date) return "-"
+
+      try {
+        const parsedDate = new Date(date)
+        return isNaN(parsedDate.getTime()) ? "Invalid Date" : parsedDate.toLocaleDateString()
+      } catch {
+        return "Invalid Date"
+      }
     },
   },
   {
     accessorKey: "shipCountry",
-    header: "Ship Country",
+    header: "Shipper",
   },
 ];
